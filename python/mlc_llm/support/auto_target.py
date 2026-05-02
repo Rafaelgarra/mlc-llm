@@ -551,4 +551,16 @@ PRESET = {
             "supports_storage_buffer_storage_class": 1,
         },
     },
+    "vulkan:bc250": {
+        "target": {
+            "kind": "vulkan",
+            "max_threads_per_block": 256,
+            "max_shared_memory_per_block": 65536,
+            "thread_warp_size": 32,
+            "supports_float16": 1,
+            "supports_int64": 1,
+            "supports_int16": 1,
+            "supports_int8": 1,
+        },
+    },
 }
