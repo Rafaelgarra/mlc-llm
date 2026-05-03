@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Tuple  # noqa: UP035
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
-from tvm import te, tirx
+from tvm import te, tir
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
@@ -19,7 +18,7 @@ def _rotate_half(x: Tensor) -> Tensor:
     return op.concat([op.negative(x2), x1], dim=-1)
 
 
-def _repeat_mrope_section(section: Sequence[int]) -> Tuple[int, ...]:  # noqa: UP006
+def _repeat_mrope_section(section: Sequence[int]) -> Tuple[int, ...]:
     if not section:
         raise ValueError("mrope_section must not be empty.")
     if any(s <= 0 for s in section):
@@ -27,8 +26,8 @@ def _repeat_mrope_section(section: Sequence[int]) -> Tuple[int, ...]:  # noqa: U
     return tuple(section) * 2
 
 
-def _split_indices_from_sizes(sizes: Sequence[int]) -> List[int]:  # noqa: UP006
-    indices: List[int] = []  # noqa: UP006
+def _split_indices_from_sizes(sizes: Sequence[int]) -> List[int]:
+    indices: List[int] = []
     running = 0
     # Drop the final cumulative sum so split() keeps the last chunk.
     for size in sizes[:-1]:
@@ -76,7 +75,7 @@ class MultimodalRotaryEmbedding(nn.Module):
             theta ** (np.arange(0, head_dim, 2, dtype="float32") / np.float32(head_dim))
         )
 
-    def forward(self, reference: Tensor, position_ids: Tensor) -> Tuple[Tensor, Tensor]:  # noqa: UP006
+    def forward(self, reference: Tensor, position_ids: Tensor) -> Tuple[Tensor, Tensor]:
         """Return ``(cos, sin)`` with shape ``(3, batch, seq, head_dim)``."""
         if len(position_ids.shape) != 3:
             raise ValueError(
@@ -109,7 +108,7 @@ class MultimodalRotaryEmbedding(nn.Module):
             def compute(x: te.Tensor):
                 return te.compute(
                     x.shape,
-                    lambda *indices: getattr(tirx, func_name)(x[indices]),
+                    lambda *indices: getattr(tir, func_name)(x[indices]),
                     name=f"mrope_{func_name}",
                 )
 
@@ -120,14 +119,14 @@ class MultimodalRotaryEmbedding(nn.Module):
         return cos.astype(dtype), sin.astype(dtype)
 
 
-def apply_multimodal_rotary_pos_emb(
+def apply_multimodal_rotary_pos_emb(  # pylint: disable=too-many-arguments
     q: Tensor,
     k: Tensor,
     cos: Tensor,
     sin: Tensor,
     mrope_section: Sequence[int],
     unsqueeze_dim: int = 2,
-) -> Tuple[Tensor, Tensor]:  # noqa: UP006
+) -> Tuple[Tensor, Tensor]:
     """Apply multimodal rotary embedding to query and key tensors."""
 
     split_sizes = _repeat_mrope_section(mrope_section)
@@ -152,7 +151,7 @@ class VisionPositionMetadata:
     spatial_merge_size: int
     tokens_per_second: float
 
-    def merged_hw(self, height: int, width: int) -> Tuple[int, int]:  # noqa: UP006
+    def merged_hw(self, height: int, width: int) -> Tuple[int, int]:
         """Return merged height/width after applying ``spatial_merge_size``."""
 
         if height % self.spatial_merge_size != 0 or width % self.spatial_merge_size != 0:
@@ -173,7 +172,7 @@ def _text_chunk(length: int, offset: int) -> np.ndarray:
     return chunk + offset
 
 
-def _grid_chunk(
+def _grid_chunk(  # pylint: disable=too-many-arguments
     grid_t: int,
     grid_h: int,
     grid_w: int,
@@ -213,7 +212,7 @@ def _count_vision_items(
     vision_start_token_id: int,
     image_token_id: int,
     video_token_id: int,
-) -> Tuple[int, int]:  # noqa: UP006
+) -> Tuple[int, int]:
     vision_starts = np.where(token_array == vision_start_token_id)[0]
     valid_starts = vision_starts[vision_starts + 1 < token_array.shape[0]]
     following_tokens = token_array[valid_starts + 1]
@@ -228,7 +227,7 @@ def _next_vision_block(
     meta: VisionPositionMetadata,
     has_images: bool,
     has_videos: bool,
-) -> Tuple[str, int]:  # noqa: UP006
+) -> Tuple[str, int]:
     sentinel = len(tokens) + 1
     image_end = _find_token_index(tokens, meta.image_token_id, start) if has_images else sentinel
     video_end = _find_token_index(tokens, meta.video_token_id, start) if has_videos else sentinel
@@ -237,14 +236,14 @@ def _next_vision_block(
     return "video", video_end
 
 
-def _load_grid_for_block(
+def _load_grid_for_block(  # pylint: disable=too-many-arguments
     block_kind: str,
-    image_grid_thw: Optional[np.ndarray],  # noqa: UP045
-    video_grid_thw: Optional[np.ndarray],  # noqa: UP045
-    second_per_grid_ts: Optional[np.ndarray],  # noqa: UP045
+    image_grid_thw: Optional[np.ndarray],
+    video_grid_thw: Optional[np.ndarray],
+    second_per_grid_ts: Optional[np.ndarray],
     image_index: int,
     video_index: int,
-) -> Tuple[int, int, int, float, int, int]:  # noqa: UP006
+) -> Tuple[int, int, int, float, int, int]:
     if block_kind == "image":
         if image_grid_thw is None:
             raise ValueError("Image grids are required for sequences with image tokens.")
@@ -260,15 +259,15 @@ def _load_grid_for_block(
     return int(grid_t), int(grid_h), int(grid_w), second_per_grid, image_index, video_index + 1
 
 
-def _build_sequence_position_ids(
+def _build_sequence_position_ids(  # pylint: disable=too-many-arguments,too-many-locals
     input_tokens: Sequence[int],
     meta: VisionPositionMetadata,
-    image_grid_thw: Optional[np.ndarray],  # noqa: UP045
-    video_grid_thw: Optional[np.ndarray],  # noqa: UP045
-    second_per_grid_ts: Optional[np.ndarray],  # noqa: UP045
+    image_grid_thw: Optional[np.ndarray],
+    video_grid_thw: Optional[np.ndarray],
+    second_per_grid_ts: Optional[np.ndarray],
     image_index: int,
     video_index: int,
-) -> Tuple[np.ndarray, int, int, int]:  # noqa: UP006
+) -> Tuple[np.ndarray, int, int, int]:
     token_array = np.asarray(input_tokens, dtype=np.int64)
     image_count, video_count = _count_vision_items(
         token_array,
@@ -281,7 +280,7 @@ def _build_sequence_position_ids(
     if video_count > 0 and video_grid_thw is None:
         raise ValueError("Video grids are required for sequences with video tokens.")
 
-    llm_pos_ids_list: List[np.ndarray] = []  # noqa: UP006
+    llm_pos_ids_list: List[np.ndarray] = []
     start = 0
     remain_images = image_count
     remain_videos = video_count
@@ -345,8 +344,8 @@ def _build_sequence_position_ids(
 
 def _text_only_position_ids(
     input_ids: np.ndarray,
-    attention_mask: Optional[np.ndarray],  # noqa: UP045
-) -> Tuple[np.ndarray, np.ndarray]:  # noqa: UP006
+    attention_mask: Optional[np.ndarray],
+) -> Tuple[np.ndarray, np.ndarray]:
     batch, seq_len = input_ids.shape
     if attention_mask is None:
         base: np.ndarray = np.arange(seq_len, dtype=np.int64).reshape(1, 1, -1)
@@ -361,14 +360,14 @@ def _text_only_position_ids(
     return position.astype(np.int64), delta
 
 
-def get_mrope_position_ids(
+def get_mrope_position_ids(  # pylint: disable=too-many-arguments,too-many-locals
     input_ids: np.ndarray,
     meta: VisionPositionMetadata,
-    attention_mask: Optional[np.ndarray] = None,  # noqa: UP045
-    image_grid_thw: Optional[np.ndarray] = None,  # noqa: UP045
-    video_grid_thw: Optional[np.ndarray] = None,  # noqa: UP045
-    second_per_grid_ts: Optional[np.ndarray] = None,  # noqa: UP045
-) -> Tuple[np.ndarray, np.ndarray]:  # noqa: UP006
+    attention_mask: Optional[np.ndarray] = None,
+    image_grid_thw: Optional[np.ndarray] = None,
+    video_grid_thw: Optional[np.ndarray] = None,
+    second_per_grid_ts: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
     """Generate 3D position IDs and deltas following Hugging Face Qwen2.5-VL."""
 
     input_ids = np.asarray(input_ids, dtype=np.int64)
@@ -411,14 +410,14 @@ def get_mrope_position_ids(
 
     image_index = 0
     video_index = 0
-    deltas: List[int] = []  # noqa: UP006
+    deltas: List[int] = []
 
     for batch_idx in range(batch):
         tokens = input_ids[batch_idx]
         if attention is not None:
             tokens = tokens[attention[batch_idx]]
         token_values = np.asarray(tokens, dtype=np.int64).tolist()
-        input_tokens: List[int] = [int(token) for token in token_values]  # noqa: UP006
+        input_tokens: List[int] = [int(token) for token in token_values]
         if not input_tokens:
             deltas.append(0)
             continue
